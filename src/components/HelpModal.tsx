@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, HelpCircle, AlertCircle, Headphones } from 'lucide-react';
+import { X, HelpCircle, AlertCircle, Headphones, Bluetooth } from 'lucide-react';
 import { translations, type Language } from '../i18n';
 
 interface Props {
@@ -68,6 +68,15 @@ export const HelpModal: React.FC<Props> = ({ isOpen, onClose, lang }) => {
           <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5 space-y-1">
             <p className="font-semibold text-amber-300">{t.recGuideMobileProTitle}</p>
             <p className="text-slate-400 leading-relaxed">{t.recGuideMobileProDesc}</p>
+          </div>
+
+          {/* Bluetooth ガイド */}
+          <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5 space-y-1">
+            <p className="font-semibold text-cyan-300 flex items-center gap-1.5">
+              <Bluetooth className="w-3.5 h-3.5" />
+              <span>{t.recGuideBtTitle}</span>
+            </p>
+            <p className="text-slate-400 leading-relaxed">{t.recGuideBtDesc}</p>
           </div>
         </div>
 

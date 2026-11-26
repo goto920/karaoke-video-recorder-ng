@@ -32,6 +32,7 @@ export const translations = {
     bgmVolume: '伴奏音量',
     vocalVolume: '歌声音量',
     masterVolume: 'マスター音量 (全体)',
+    btnRewind: '先頭に戻る',
 
     deviceSelectTitle: '使用する機器の選択',
     micSelect: 'マイク:',
@@ -60,6 +61,8 @@ export const translations = {
     recGuideMobileProDesc: '「イヤホン端子付きの USB-C / Lightning マイク」やスマホ対応インターフェースを使用すると、PC同様に遅延0msの環境が作れます。',
     recGuideMobileCasualTitle: '🎧 スマートフォン (手軽に・機材なし)',
     recGuideMobileCasualDesc: 'アプリのモニターを「OFF」にし、有線イヤホンを【片耳だけ外して】歌うのがプロも使う王道テクニックです。伴奏を片耳で聴きながら、外した耳で自分の生声（完全遅延ゼロ）を直接聴くことで違和感なくピッチをとれます。',
+    recGuideBtTitle: '📶 Bluetooth イヤホン (AirPodsなど)',
+    recGuideBtDesc: 'モニターを【必ずOFF】にし、伴奏を聴きながら自分の声は骨伝導で聴いて歌ってください。録画後にタイミング調整のスケールを [1000ms] にして左にスライドすれば、Bluetooth特有の大きな遅延を完全に相殺できます。',
 
     // エフェクトラック
     fxRackTitle: '🎛️ スタジオ・エフェクトラック (先行プレビュー)',
@@ -106,6 +109,7 @@ export const translations = {
     bgmVolume: 'BGM Volume',
     vocalVolume: 'Vocal Volume',
     masterVolume: 'Master Volume',
+    btnRewind: 'Rewind to Start',
 
     deviceSelectTitle: 'Device Selection',
     micSelect: 'Mic:',
@@ -134,6 +138,8 @@ export const translations = {
     recGuideMobileProDesc: 'Use a USB-C / Lightning microphone with a built-in headphone jack or an audio interface for a hardware-level zero-latency monitor.',
     recGuideMobileCasualTitle: '🎧 Smartphone (Casual / Free Technique)',
     recGuideMobileCasualDesc: 'Turn app monitor "OFF" and take out one earphone ("One-Ear Style"). Listen to the backing track in one ear while hearing your natural voice with zero latency in the free ear—a standard trick used by pro vocalists.',
+    recGuideBtTitle: '📶 Bluetooth Earphones (AirPods etc.)',
+    recGuideBtDesc: 'Keep vocal monitor [OFF]. Sing by hearing your voice through bone conduction. In preview, select [1000ms] scale and slide left to completely cancel Bluetooth transmission latency.',
 
     // Effect Rack
     fxRackTitle: '🎛️ Studio FX Rack (Preview UI)',

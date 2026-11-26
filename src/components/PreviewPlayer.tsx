@@ -10,8 +10,11 @@ import {
   ChevronDown,
   Sparkles,
   SlidersHorizontal,
+  SkipBack,
 } from 'lucide-react';
 import { translations, type Language } from '../i18n';
+
+type ScaleMode = 200 | 500 | 1000;
 
 interface Props {
   videoBlob: Blob | null;
@@ -39,11 +42,19 @@ export const PreviewPlayer: React.FC<Props> = ({
   const t = translations[lang];
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const [scaleMode, setScaleMode] = useState<ScaleMode>(500); // 200, 500, 1000ms
   const [offsetMs, setOffsetMs] = useState(-60);
   const [vocalVol, setVocalVol] = useState(1.4);
-  const [masterVol, setMasterVol] = useState(1.0); // マスター音量 (全体)
+  const [masterVol, setMasterVol] = useState(1.0);
 
-  // エフェクトラックの開閉 & ダミーパラメータ
+  // 再生プログレス（シークバー）
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const animFrameRef = useRef<number | null>(null);
+  const playbackStartTimeRef = useRef<number>(0);
+  const startOffsetRef = useRef<number>(0);
+
+  // エフェクトラック
   const [showFxRack, setShowFxRack] = useState(false);
   const [clarity, setClarity] = useState(50);
   const [comp, setComp] = useState(50);
@@ -62,13 +73,24 @@ export const PreviewPlayer: React.FC<Props> = ({
   const vocalDelayRef = useRef<DelayNode | null>(null);
   const vocalBufferRef = useRef<AudioBuffer | null>(null);
 
+  // 全体時間の計算（動画、ボーカル、伴奏の最大値）
   useEffect(() => {
+    const vocalSec = vocalData.length / audioCtx.sampleRate;
+    const bgmSec = bgmBuffer ? bgmBuffer.duration : 0;
+    const maxDur = Math.max(vocalSec, bgmSec);
+    setDuration(maxDur);
+
     if (videoBlob) {
       videoUrlRef.current = URL.createObjectURL(videoBlob);
       if (videoRef.current) {
         videoRef.current.src = videoUrlRef.current;
         videoRef.current.defaultMuted = true;
         videoRef.current.muted = true;
+        videoRef.current.onloadedmetadata = () => {
+          if (videoRef.current?.duration) {
+            setDuration((prev) => Math.max(prev, videoRef.current?.duration || 0));
+          }
+        };
       }
     }
 
@@ -79,23 +101,41 @@ export const PreviewPlayer: React.FC<Props> = ({
     return () => {
       if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
       stopAudio();
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, [videoBlob, vocalData]);
 
-  // 音量変更の動的反映
+  // 音量変更
   useEffect(() => {
     if (bgmGainRef.current) bgmGainRef.current.gain.value = bgmVol;
     if (vocalGainRef.current) vocalGainRef.current.gain.value = vocalVol;
     if (masterGainRef.current) masterGainRef.current.gain.value = masterVol;
   }, [bgmVol, vocalVol, masterVol]);
 
+  // ★1.2秒（1200ms）のベース遅延マージンで、1000ms戻しも完全にカバー
+  const BASE_DELAY_SEC = 1.2;
+
   useEffect(() => {
     if (vocalDelayRef.current && audioCtx) {
-      const baseDelaySec = 0.3;
-      const targetDelaySec = Math.max(0, baseDelaySec + offsetMs / 1000);
+      const targetDelaySec = Math.max(0, BASE_DELAY_SEC + offsetMs / 1000);
       vocalDelayRef.current.delayTime.setTargetAtTime(targetDelaySec, audioCtx.currentTime, 0.03);
     }
   }, [offsetMs, audioCtx]);
+
+  // プログレスバーの更新ループ
+  const updateProgress = () => {
+    if (!isPlaying) return;
+    const elapsed = audioCtx.currentTime - playbackStartTimeRef.current;
+    const cur = startOffsetRef.current + elapsed;
+    if (cur >= duration && duration > 0) {
+      pauseAll();
+      setCurrentTime(0);
+      startOffsetRef.current = 0;
+    } else {
+      setCurrentTime(cur);
+      animFrameRef.current = requestAnimationFrame(updateProgress);
+    }
+  };
 
   const stopAudio = () => {
     try {
@@ -106,17 +146,16 @@ export const PreviewPlayer: React.FC<Props> = ({
     vocalSourceRef.current = null;
   };
 
-  const playAll = () => {
+  const playAll = (fromOffset = currentTime) => {
     stopAudio();
     if (audioCtx.state === 'suspended') {
       audioCtx.resume();
     }
 
-    const startOffset = videoRef.current ? videoRef.current.currentTime : 0;
     const now = audioCtx.currentTime + 0.05;
-    const baseDelaySec = 0.3;
+    playbackStartTimeRef.current = now;
+    startOffsetRef.current = fromOffset;
 
-    // マスターゲイン
     const masterGain = audioCtx.createGain();
     masterGain.gain.value = masterVol;
     masterGain.connect(audioCtx.destination);
@@ -132,34 +171,36 @@ export const PreviewPlayer: React.FC<Props> = ({
     vocalGain.connect(masterGain);
     vocalGainRef.current = vocalGain;
 
-    const vocalDelay = audioCtx.createDelay(1.0);
-    vocalDelay.delayTime.value = Math.max(0, baseDelaySec + offsetMs / 1000);
+    const vocalDelay = audioCtx.createDelay(2.5); // 最大2.5秒まで許容
+    vocalDelay.delayTime.value = Math.max(0, BASE_DELAY_SEC + offsetMs / 1000);
     vocalDelay.connect(vocalGain);
     vocalDelayRef.current = vocalDelay;
 
-    if (bgmBuffer) {
+    if (bgmBuffer && fromOffset < bgmBuffer.duration) {
       const bgmSrc = audioCtx.createBufferSource();
       bgmSrc.buffer = bgmBuffer;
       bgmSrc.connect(bgmGain);
-      bgmSrc.start(now + baseDelaySec, startOffset);
+      bgmSrc.start(now + BASE_DELAY_SEC, fromOffset);
       bgmSourceRef.current = bgmSrc;
     }
 
-    if (vocalBufferRef.current) {
+    if (vocalBufferRef.current && fromOffset < vocalBufferRef.current.duration) {
       const vocalSrc = audioCtx.createBufferSource();
       vocalSrc.buffer = vocalBufferRef.current;
       vocalSrc.connect(vocalDelay);
-      vocalSrc.start(now, startOffset);
+      vocalSrc.start(now, fromOffset);
       vocalSourceRef.current = vocalSrc;
     }
 
     if (videoRef.current) {
+      videoRef.current.currentTime = fromOffset;
       setTimeout(() => {
         videoRef.current?.play().catch(() => {});
-      }, 50 + baseDelaySec * 1000);
+      }, 50 + BASE_DELAY_SEC * 1000);
     }
 
     setIsPlaying(true);
+    animFrameRef.current = requestAnimationFrame(updateProgress);
   };
 
   const pauseAll = () => {
@@ -167,6 +208,7 @@ export const PreviewPlayer: React.FC<Props> = ({
     if (videoRef.current) {
       videoRef.current.pause();
     }
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     setIsPlaying(false);
   };
 
@@ -174,8 +216,45 @@ export const PreviewPlayer: React.FC<Props> = ({
     if (isPlaying) {
       pauseAll();
     } else {
-      playAll();
+      playAll(currentTime);
     }
+  };
+
+  // 先頭巻き戻し
+  const handleRewind = () => {
+    pauseAll();
+    setCurrentTime(0);
+    startOffsetRef.current = 0;
+    if (videoRef.current) videoRef.current.currentTime = 0;
+  };
+
+  // シーク
+  const handleSeek = (newTime: number) => {
+    setCurrentTime(newTime);
+    startOffsetRef.current = newTime;
+    if (videoRef.current) videoRef.current.currentTime = newTime;
+    if (isPlaying) {
+      playAll(newTime);
+    }
+  };
+
+  // スケールに応じた最小値・最大値の計算
+  const getScaleRange = () => {
+    switch (scaleMode) {
+      case 200:
+        return { min: -200, max: 30 };
+      case 500:
+        return { min: -500, max: 50 };
+      case 1000:
+        return { min: -1000, max: 50 };
+    }
+  };
+  const { min: minRange, max: maxRange } = getScaleRange();
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -187,7 +266,6 @@ export const PreviewPlayer: React.FC<Props> = ({
             ref={videoRef}
             playsInline
             muted
-            onEnded={() => setIsPlaying(false)}
             className="w-full h-full object-cover -scale-x-100"
           />
         ) : (
@@ -203,9 +281,36 @@ export const PreviewPlayer: React.FC<Props> = ({
         )}
       </div>
 
+      {/* シークバー（プログレスバー） */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1.5">
+        <div className="flex justify-between text-[11px] font-mono text-slate-400">
+          <span>{formatTime(currentTime)}</span>
+          <span>{formatTime(duration)}</span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max={duration || 100}
+          step="0.1"
+          value={currentTime}
+          onChange={(e) => handleSeek(parseFloat(e.target.value))}
+          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+        />
+      </div>
+
       {/* コントロールバー */}
       <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-xl p-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* 先頭巻き戻し */}
+          <button
+            onClick={handleRewind}
+            title={t.btnRewind}
+            className="p-2 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition active:scale-95 cursor-pointer"
+          >
+            <SkipBack className="w-4 h-4" />
+          </button>
+
+          {/* 再生 / 一時停止 */}
           <button
             onClick={togglePlay}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg transition active:scale-95 cursor-pointer shadow"
@@ -213,18 +318,21 @@ export const PreviewPlayer: React.FC<Props> = ({
             {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             <span>{isPlaying ? '一時停止' : '再生'}</span>
           </button>
+
+          {/* 録り直し */}
           <button
             onClick={onReset}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 text-xs px-3 py-2 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 text-xs px-2.5 py-2 rounded-lg hover:bg-slate-800 transition cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>{t.btnReRecord}</span>
+            <span className="hidden sm:inline">{t.btnReRecord}</span>
           </button>
         </div>
 
+        {/* ダウンロード */}
         <button
           onClick={() => onExport(offsetMs, bgmVol, vocalVol)}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-2 rounded-lg transition active:scale-95 cursor-pointer shadow"
+          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-4 py-2 rounded-lg transition active:scale-95 cursor-pointer shadow text-xs sm:text-sm"
         >
           <Download className="w-4 h-4" />
           <span>{videoBlob ? t.btnExport : t.btnExportAudio}</span>
@@ -233,30 +341,79 @@ export const PreviewPlayer: React.FC<Props> = ({
 
       {/* 基本コントロール（タイミング & バランス） */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
-        {/* タイミング調整スライダー */}
-        <div className="space-y-1.5 pb-3 border-b border-slate-800/60">
-          <div className="flex justify-between text-xs">
-            <span className="flex items-center gap-1.5 font-medium text-slate-300">
+        {/* タイミング調整ヘッダー & スケール切替 */}
+        <div className="space-y-2 pb-3 border-b border-slate-800/60">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
               <Sliders className="w-3.5 h-3.5 text-indigo-400" />
               <span>{videoBlob ? t.syncOffsetVideoTitle : t.syncOffsetTitle}</span>
+              <span className="font-mono text-indigo-400 font-bold ml-1">
+                {offsetMs > 0 ? `+${offsetMs}` : offsetMs} ms
+              </span>
             </span>
-            <span className="font-mono text-indigo-400 font-bold">
-              {offsetMs > 0 ? `+${offsetMs}` : offsetMs} ms
-            </span>
+
+            {/* スケール切替ボタン [ 200 | 500 | 1000 ] */}
+            <div className="flex items-center bg-slate-950 border border-slate-800 p-0.5 rounded-lg text-[10px] font-mono self-start sm:self-auto">
+              <span className="text-slate-500 px-1.5">Scale:</span>
+              <button
+                onClick={() => setScaleMode(200)}
+                className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                  scaleMode === 200 ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                200
+              </button>
+              <button
+                onClick={() => setScaleMode(500)}
+                className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                  scaleMode === 500 ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                500
+              </button>
+              <button
+                onClick={() => setScaleMode(1000)}
+                className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                  scaleMode === 1000 ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                1000
+              </button>
+            </div>
           </div>
-          <input
-            type="range"
-            min="-200"
-            max="100"
-            step="5"
-            value={offsetMs}
-            onChange={(e) => setOffsetMs(parseInt(e.target.value, 10))}
-            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-          />
-          <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-            <span className="text-indigo-400">◀ 歌を進める・早くする (-200ms)</span>
-            <span>0ms</span>
-            <span>歌を遅らせる (+100ms) ▶</span>
+
+          {/* スライダー & ステッパー [-5ms] [+5ms] */}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={() => setOffsetMs((prev) => Math.max(minRange, prev - 5))}
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold rounded-lg transition active:scale-95 shrink-0 cursor-pointer"
+            >
+              -5ms
+            </button>
+
+            <div className="flex-1 space-y-1">
+              <input
+                type="range"
+                min={minRange}
+                max={maxRange}
+                step="5"
+                value={offsetMs}
+                onChange={(e) => setOffsetMs(parseInt(e.target.value, 10))}
+                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+              />
+              <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                <span className="text-indigo-400">◀ 歌を進める・早くする ({minRange}ms)</span>
+                <span>0ms</span>
+                <span>+{maxRange}ms ▶</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setOffsetMs((prev) => Math.min(maxRange, prev + 5))}
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold rounded-lg transition active:scale-95 shrink-0 cursor-pointer"
+            >
+              +5ms
+            </button>
           </div>
         </div>
 
@@ -318,7 +475,7 @@ export const PreviewPlayer: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 🎛️ スタジオ・エフェクトラック（開閉式アコーディオン） */}
+      {/* 🎛️ スタジオ・エフェクトラック（開閉式） */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden text-xs">
         <button
           onClick={() => setShowFxRack(!showFxRack)}
@@ -345,7 +502,6 @@ export const PreviewPlayer: React.FC<Props> = ({
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
-                {/* Clarity (EQ) */}
                 <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg space-y-1.5">
                   <div className="flex justify-between text-slate-400">
                     <span>{t.fxClarity}</span>
@@ -361,7 +517,6 @@ export const PreviewPlayer: React.FC<Props> = ({
                   />
                 </div>
 
-                {/* 1-Knob Comp */}
                 <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg space-y-1.5">
                   <div className="flex justify-between text-slate-400">
                     <span>{t.fxComp}</span>
@@ -377,7 +532,6 @@ export const PreviewPlayer: React.FC<Props> = ({
                   />
                 </div>
 
-                {/* Plate Reverb */}
                 <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg space-y-1.5">
                   <div className="flex justify-between text-slate-400">
                     <span>{t.fxReverb}</span>
@@ -393,7 +547,6 @@ export const PreviewPlayer: React.FC<Props> = ({
                   />
                 </div>
 
-                {/* Delay */}
                 <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg space-y-1.5">
                   <div className="flex justify-between text-slate-400">
                     <span>{t.fxDelay}</span>
@@ -423,7 +576,6 @@ export const PreviewPlayer: React.FC<Props> = ({
                   <p className="text-[10.5px] text-slate-400">オケとボーカルをプロ音圧で一体化接着</p>
                 </div>
 
-                {/* プリセット選択ボタン */}
                 <div className="flex items-center bg-slate-950 border border-slate-800 p-0.5 rounded-lg text-xs">
                   <button
                     onClick={() => setMaximizer('off')}
