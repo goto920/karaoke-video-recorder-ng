@@ -29,8 +29,8 @@ export default defineConfig({
       registerType: 'prompt',
       includeAssets: ['favicon.ico', 'audio-recorder-worklet.js', 'pwa-192x192.svg', 'pwa-512x512.svg'],
       manifest: {
-        name: 'カラオケ練習マシン',
-        short_name: 'カラオケマシン',
+        name: 'Karaoke Practice Machine',
+        short_name: 'Karaoke Machine',
         description: '超低遅延・高音質ピュア録音＆リップシンク微調整つきカラオケ練習マシン',
         theme_color: '#020617',
         background_color: '#020617',
